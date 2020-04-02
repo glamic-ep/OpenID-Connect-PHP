@@ -221,6 +221,16 @@ class OpenIDConnectClient
     protected $enc_type = PHP_QUERY_RFC1738;
 
     /**
+     * @var CacheInterface $cache
+     */
+    private $cache;
+
+    /**
+     * @var int $cacheTTL
+     */
+    private $cacheTTL = 0;
+
+    /**
      * @param $provider_url string optional
      *
      * @param $client_id string optional
@@ -241,6 +251,22 @@ class OpenIDConnectClient
         $this->issuerValidator = function($iss){
 	        return ($iss === $this->getIssuer() || $iss === $this->getWellKnownIssuer() || $iss === $this->getWellKnownIssuer(true));
         };
+    }
+
+    /**
+     * @param CacheInterface $cache
+     */
+    public function setCache($cache)
+    {
+        $this->cache = $cache;
+    }
+
+    /**
+     * @param int $ttl
+     */
+    public function setCacheTTL($ttl)
+    {
+        $this->cacheTTL = $ttl;
     }
 
     /**
@@ -500,7 +526,7 @@ class OpenIDConnectClient
         // This is also known as auto "discovery"
         if(!$this->wellKnown) {
             $well_known_config_url = rtrim($this->getProviderURL(), '/') . '/.well-known/openid-configuration';
-            $this->wellKnown = json_decode($this->fetchURL($well_known_config_url));
+            $this->wellKnown = json_decode($this->fetchCacheableURL($well_known_config_url));
         }
 
         $value = false;
@@ -888,7 +914,7 @@ class OpenIDConnectClient
             throw new OpenIDConnectClientException('Error decoding JSON from token header');
         }
         $payload = implode('.', $parts);
-        $jwks = json_decode($this->fetchURL($this->getProviderConfigValue('jwks_uri')));
+        $jwks = json_decode($this->fetchCacheableURL($this->getProviderConfigValue('jwks_uri')));
         if ($jwks === NULL) {
             throw new OpenIDConnectClientException('Error decoding JSON from jwks_uri');
         }
@@ -1053,6 +1079,31 @@ class OpenIDConnectClient
         }
 
         return null;
+    }
+
+    /**
+     * @param string $url
+     * @return mixed
+     * @throws OpenIDConnectClientException
+     */
+    private function fetchCacheableURL($url) {
+        try {
+            if($this->cache !== null && $this->cacheTTL > 0) {
+                $key = md5($url);
+
+                $contents = $this->cache->get($key, null);
+
+                if ($contents === null) {
+                    $contents = $this->fetchURL($url);
+
+                    $this->cache->set($key, $contents, $this->cacheTTL);
+                }
+
+                return $contents;
+            }
+        } catch (\Psr\SimpleCache\InvalidArgumentException $ex) {}
+
+        return $this->fetchURL($url);
     }
 
     /**
